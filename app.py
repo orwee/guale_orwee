@@ -6,9 +6,7 @@ import re
 # --- Configuración de la página ---
 st.set_page_config(layout="wide", page_title="Dashboard de Pools")
 
-# --- CAMBIO 1: Cargar credenciales de forma segura desde secrets.toml ---
-# Ya no se escriben las claves directamente en el código.
-# Streamlit las toma del archivo .streamlit/secrets.toml
+# --- Cargar credenciales de forma segura desde secrets.toml ---
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -18,7 +16,6 @@ except FileNotFoundError:
 except KeyError:
     st.error("Asegúrate de que 'SUPABASE_URL' y 'SUPABASE_KEY' están definidos en tu archivo 'secrets.toml'.")
     st.stop()
-
 
 # Headers para la petición a la API
 headers = {
@@ -30,11 +27,19 @@ headers = {
 
 @st.cache_data
 def load_data():
-    """Carga los datos desde la API de Supabase y los filtra por memes=0."""
-    select_columns = "blockchain,dex,pair,tier,aprmensual,tvlmensual,memes"
+    """
+    Carga los datos desde la API de Supabase y aplica filtros de backend
+    para 'memes' y 'filtro_3'.
+    """
+    # --- CAMBIO: Añadimos filtro_3 a la consulta ---
+    # 1. Se añade 'filtro_3' a las columnas que se seleccionan.
+    select_columns = "blockchain,dex,pair,tier,aprmensual,tvlmensual,memes,filtro_3"
+    
+    # 2. Se añade el nuevo filtro a los parámetros de la consulta.
     params = {
         "select": select_columns,
-        "memes": "eq.0"
+        "memes": "eq.0",               # Filtro existente
+        "filtro_3": "in.(1,2,3)"       # NUEVO FILTRO: filtro_3 debe ser 1, 2, o 3
     }
     
     try:
@@ -74,7 +79,7 @@ st.markdown("Utiliza los filtros en la barra lateral para explorar los datos.")
 df_raw = load_data()
 
 if df_raw.empty:
-    st.warning("No se pudieron cargar los datos. Revisa la configuración de la API o la conexión.")
+    st.warning("No se pudieron cargar los datos o no hay resultados con los filtros de backend aplicados (memes=0, filtro_3 in (1,2,3)).")
 else:
     df_processed = df_raw.copy()
     df_processed['tvl_numeric'] = clean_numeric_text(df_processed['tvlmensual'])
@@ -156,7 +161,6 @@ else:
     if df_filtrado.empty:
         st.info("No se encontraron resultados con los filtros aplicados. Intenta ampliar los rangos.")
     else:
-        # --- CAMBIO 2: Ordenar la tabla por el APR numérico de forma descendente ---
         df_ordenado = df_filtrado.sort_values(by='apr_numeric', ascending=False)
         
         st.markdown("### Tabla de Datos (ordenada por APR Mensual)")
@@ -166,7 +170,6 @@ else:
 
         st.markdown("### Gráficos Comparativos")
         
-        # Para los gráficos, usamos el dataframe ordenado por TVL para mejor visualización
         df_grafico = df_filtrado.sort_values(by='tvl_numeric', ascending=False).head(20)
 
         col1, col2 = st.columns(2)
