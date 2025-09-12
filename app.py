@@ -30,7 +30,6 @@ def load_data():
     """
     Carga los datos desde la API de Supabase y aplica filtros de backend.
     """
-    # --- CAMBIO 1: Añadir las nuevas columnas a la consulta ---
     select_columns = (
         "blockchain,dex,pair,tier,aprmensual,tvlmensual,memes,filtro_3,"
         "correlacion,aprmonthchart,tvlmonthchart,datemonthchart"
@@ -165,10 +164,23 @@ else:
         df_ordenado = df_filtrado.sort_values(by='apr_numeric', ascending=False)
         
         st.markdown("### Tabla de Datos (ordenada por APR Mensual)")
-        # --- CAMBIO 2: Añadir 'correlacion' a la tabla visible ---
-        st.dataframe(df_ordenado[[
-            'pair', 'tier', 'correlacion', 'aprmensual', 'tvlmensual', 'blockchain', 'dex'
-        ]], use_container_width=True)
+        
+        # --- INICIO DE LA CORRECCIÓN ---
+        # 1. Define la lista de columnas que te gustaría mostrar en orden.
+        columnas_deseadas = ['pair', 'tier', 'correlacion', 'aprmensual', 'tvlmensual', 'blockchain', 'dex']
+        
+        # 2. Comprueba cuáles de esas columnas existen realmente en el DataFrame.
+        columnas_disponibles = [col for col in columnas_deseadas if col in df_ordenado.columns]
+        
+        # 3. (Opcional) Muestra un aviso si faltan columnas.
+        columnas_faltantes = [col for col in columnas_deseadas if col not in df_ordenado.columns]
+        if columnas_faltantes:
+            st.warning(f"Aviso: Las siguientes columnas no se encontraron y no se mostrarán: {', '.join(columnas_faltantes)}")
+
+        # 4. Muestra el DataFrame solo con las columnas que sí existen.
+        st.dataframe(df_ordenado[columnas_disponibles], use_container_width=True)
+        # --- FIN DE LA CORRECCIÓN ---
+
 
         st.markdown("### Gráficos Comparativos (Top 20 por TVL)")
         df_grafico = df_filtrado.sort_values(by='tvl_numeric', ascending=False).head(20)
@@ -180,11 +192,9 @@ else:
             st.markdown("#### APR por Pair")
             st.bar_chart(df_grafico.rename(columns={'apr_numeric': 'APR'}), x='pair', y='APR')
         
-        # --- CAMBIO 3: Nueva sección para el gráfico histórico ---
         st.markdown("---")
         st.subheader("Análisis Histórico Mensual por Pair")
 
-        # Desplegable para seleccionar un 'pair' de los resultados filtrados
         lista_pares_filtrados = df_filtrado['pair'].unique()
         pair_para_grafico = st.selectbox(
             "Selecciona un Pair para ver su historial:",
@@ -192,32 +202,25 @@ else:
         )
 
         if pair_para_grafico:
-            # Obtener los datos del pair seleccionado
             datos_pair = df_filtrado[df_filtrado['pair'] == pair_para_grafico].iloc[0]
             
-            # Extraer las listas de los charts
             dates = datos_pair['datemonthchart']
             tvls = datos_pair['tvlmonthchart']
             aprs = datos_pair['aprmonthchart']
 
-            # Comprobar que los datos existen y no están vacíos
             if dates and tvls and aprs and len(dates) > 0:
-                # Crear un DataFrame para el gráfico
                 df_chart = pd.DataFrame({
                     'Fecha': pd.to_datetime(dates),
                     'TVL': tvls,
                     'APR': aprs
                 }).set_index('Fecha')
 
-                # Calcular las medias
                 media_tvl = df_chart['TVL'].mean()
                 media_apr = df_chart['APR'].mean()
                 
-                # Añadir las medias al DataFrame para dibujarlas como una línea
                 df_chart[f'TVL Medio ({media_tvl:,.0f})'] = media_tvl
                 df_chart[f'APR Medio ({media_apr:.2f}%)'] = media_apr
 
-                # Dibujar los gráficos
                 st.markdown(f"#### Historial de TVL para **{pair_para_grafico}**")
                 st.line_chart(df_chart[['TVL', f'TVL Medio ({media_tvl:,.0f})']])
 
