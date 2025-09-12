@@ -86,20 +86,15 @@ else:
 
     # --- Barra Lateral con Filtros ---
     st.sidebar.header("⚙️ Filtros")
-    # (El código de la barra lateral no cambia)
+    
     blockchains_disponibles = sorted(df_processed['blockchain'].unique())
-    blockchain_seleccionada = st.sidebar.multiselect(
-        "Blockchain",
-        options=blockchains_disponibles,
-        default=["arbitrum"]
-    )
+    blockchain_seleccionada = st.sidebar.multiselect("Blockchain", options=blockchains_disponibles, default=["arbitrum"])
 
     if blockchain_seleccionada:
         df_filtrado_temp = df_processed[df_processed['blockchain'].isin(blockchain_seleccionada)]
         dex_disponibles = sorted(df_filtrado_temp['dex'].unique())
     else:
         dex_disponibles = sorted(df_processed['dex'].unique())
-    
     dex_seleccionado = st.sidebar.multiselect("DEX (Exchange)", options=dex_disponibles, default=[])
 
     if dex_seleccionado:
@@ -109,50 +104,23 @@ else:
          pares_disponibles = sorted(df_filtrado_temp['pair'].unique())
     else:
         pares_disponibles = sorted(df_processed['pair'].unique())
-    
     pair_seleccionado = st.sidebar.multiselect("Pair (Par de Tokens)", options=pares_disponibles, default=[])
 
     tvl_min = 0
     tvl_max = int(df_processed['tvl_numeric'].max()) if not df_processed.empty else 0
-    tvl_seleccionado = st.sidebar.slider(
-        "TVL Mensual (en $)",
-        min_value=tvl_min,
-        max_value=tvl_max,
-        value=(1000000, tvl_max),
-        step=100000,
-        format="$%d"
-    )
+    tvl_seleccionado = st.sidebar.slider("TVL Mensual (en $)", min_value=tvl_min, max_value=tvl_max, value=(1000000, tvl_max), step=100000, format="$%d")
     
     apr_min = 0.0
     apr_max = float(df_processed['apr_numeric'].max()) if not df_processed.empty else 0.0
-    apr_seleccionado = st.sidebar.slider(
-        "APR Mensual (en %)",
-        min_value=apr_min,
-        max_value=apr_max,
-        value=(apr_min, apr_max),
-        step=1.0,
-        format="%.2f%%"
-    )
+    apr_seleccionado = st.sidebar.slider("APR Mensual (en %)", min_value=apr_min, max_value=apr_max, value=(apr_min, apr_max), step=1.0, format="%.2f%%")
 
     # --- Lógica de Filtrado ---
-    # (El código de filtrado no cambia)
     df_filtrado = df_processed.copy()
-
-    if blockchain_seleccionada:
-        df_filtrado = df_filtrado[df_filtrado['blockchain'].isin(blockchain_seleccionada)]
-    if dex_seleccionado:
-        df_filtrado = df_filtrado[df_filtrado['dex'].isin(dex_seleccionado)]
-    if pair_seleccionado:
-        df_filtrado = df_filtrado[df_filtrado['pair'].isin(pair_seleccionado)]
-
-    df_filtrado = df_filtrado[
-        (df_filtrado['tvl_numeric'] >= tvl_seleccionado[0]) & 
-        (df_filtrado['tvl_numeric'] <= tvl_seleccionado[1])
-    ]
-    df_filtrado = df_filtrado[
-        (df_filtrado['apr_numeric'] >= apr_seleccionado[0]) &
-        (df_filtrado['apr_numeric'] <= apr_seleccionado[1])
-    ]
+    if blockchain_seleccionada: df_filtrado = df_filtrado[df_filtrado['blockchain'].isin(blockchain_seleccionada)]
+    if dex_seleccionado: df_filtrado = df_filtrado[df_filtrado['dex'].isin(dex_seleccionado)]
+    if pair_seleccionado: df_filtrado = df_filtrado[df_filtrado['pair'].isin(pair_seleccionado)]
+    df_filtrado = df_filtrado[(df_filtrado['tvl_numeric'] >= tvl_seleccionado[0]) & (df_filtrado['tvl_numeric'] <= tvl_seleccionado[1])]
+    df_filtrado = df_filtrado[(df_filtrado['apr_numeric'] >= apr_seleccionado[0]) & (df_filtrado['apr_numeric'] <= apr_seleccionado[1])]
     
     # --- Visualización de Resultados ---
     st.markdown("---")
@@ -164,67 +132,59 @@ else:
         df_ordenado = df_filtrado.sort_values(by='apr_numeric', ascending=False)
         
         st.markdown("### Tabla de Datos (ordenada por APR Mensual)")
-        
-        # --- INICIO DE LA CORRECCIÓN ---
-        # 1. Define la lista de columnas que te gustaría mostrar en orden.
+        st.caption("Haz clic en una fila para ver su análisis histórico a continuación.")
+
+        # --- CAMBIO 1: Reemplazar st.dataframe con st.data_editor para permitir selección ---
         columnas_deseadas = ['pair', 'tier', 'correlacion', 'aprmensual', 'tvlmensual', 'blockchain', 'dex']
-        
-        # 2. Comprueba cuáles de esas columnas existen realmente en el DataFrame.
         columnas_disponibles = [col for col in columnas_deseadas if col in df_ordenado.columns]
         
-        # 3. (Opcional) Muestra un aviso si faltan columnas.
-        columnas_faltantes = [col for col in columnas_deseadas if col not in df_ordenado.columns]
-        if columnas_faltantes:
-            st.warning(f"Aviso: Las siguientes columnas no se encontraron y no se mostrarán: {', '.join(columnas_faltantes)}")
-
-        # 4. Muestra el DataFrame solo con las columnas que sí existen.
-        st.dataframe(df_ordenado[columnas_disponibles], use_container_width=True)
-        # --- FIN DE LA CORRECCIÓN ---
-
-
-        st.markdown("### Gráficos Comparativos (Top 20 por TVL)")
-        df_grafico = df_filtrado.sort_values(by='tvl_numeric', ascending=False).head(20)
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("#### TVL por Pair")
-            st.bar_chart(df_grafico.rename(columns={'tvl_numeric': 'TVL'}), x='pair', y='TVL')
-        with col2:
-            st.markdown("#### APR por Pair")
-            st.bar_chart(df_grafico.rename(columns={'apr_numeric': 'APR'}), x='pair', y='APR')
+        # Usamos data_editor en lugar de dataframe y le asignamos una "key" para rastrear la selección
+        st.data_editor(
+            df_ordenado[columnas_disponibles],
+            hide_index=True,
+            use_container_width=True,
+            # Deshabilitamos la edición para que solo funcione como selector
+            disabled=columnas_disponibles,
+            key="seleccion_fila"
+        )
         
         st.markdown("---")
-        st.subheader("Análisis Histórico Mensual por Pair")
+        st.subheader("Análisis Histórico Mensual")
 
-        lista_pares_filtrados = df_filtrado['pair'].unique()
-        pair_para_grafico = st.selectbox(
-            "Selecciona un Pair para ver su historial:",
-            options=lista_pares_filtrados
-        )
-
-        if pair_para_grafico:
-            datos_pair = df_filtrado[df_filtrado['pair'] == pair_para_grafico].iloc[0]
-            
-            dates = datos_pair['datemonthchart']
-            tvls = datos_pair['tvlmonthchart']
-            aprs = datos_pair['aprmonthchart']
-
-            if dates and tvls and aprs and len(dates) > 0:
-                df_chart = pd.DataFrame({
-                    'Fecha': pd.to_datetime(dates),
-                    'TVL': tvls,
-                    'APR': aprs
-                }).set_index('Fecha')
-
-                media_tvl = df_chart['TVL'].mean()
-                media_apr = df_chart['APR'].mean()
+        # --- CAMBIO 2: Lógica para mostrar gráficos basados en la fila seleccionada ---
+        # Verificamos si el usuario ha seleccionado alguna fila usando la "key" del data_editor
+        try:
+            # st.session_state.seleccion_fila['selection']['rows'] contiene los índices de las filas seleccionadas
+            if st.session_state.seleccion_fila['selection']['rows']:
+                # Obtenemos el índice de la primera fila seleccionada
+                indice_seleccionado = st.session_state.seleccion_fila['selection']['rows'][0]
                 
-                df_chart[f'TVL Medio ({media_tvl:,.0f})'] = media_tvl
-                df_chart[f'APR Medio ({media_apr:.2f}%)'] = media_apr
+                # Usamos el índice para obtener todos los datos de esa fila del dataframe ordenado
+                datos_pair = df_ordenado.iloc[indice_seleccionado]
+                pair_para_grafico = datos_pair['pair']
 
-                st.markdown(f"#### Historial de TVL para **{pair_para_grafico}**")
-                st.line_chart(df_chart[['TVL', f'TVL Medio ({media_tvl:,.0f})']])
+                st.markdown(f"Mostrando historial para: **{pair_para_grafico}**")
+                
+                dates = datos_pair['datemonthchart']
+                tvls = datos_pair['tvlmonthchart']
+                aprs = datos_pair['aprmonthchart']
 
-                st.markdown(f"#### Historial de APR para **{pair_para_grafico}**")
-                st.line_chart(df_chart[['APR', f'APR Medio ({media_apr:.2f}%)']])
+                if dates and tvls and aprs and len(dates) > 0:
+                    df_chart = pd.DataFrame({'Fecha': pd.to_datetime(dates), 'TVL': tvls, 'APR': aprs}).set_index('Fecha')
+                    
+                    media_tvl = df_chart['TVL'].mean()
+                    media_apr = df_chart['APR'].mean()
+                    df_chart[f'TVL Medio ({media_tvl:,.0f})'] = media_tvl
+                    df_chart[f'APR Medio ({media_apr:.2f}%)'] = media_apr
+
+                    st.markdown(f"#### Historial de TVL")
+                    st.line_chart(df_chart[['TVL', f'TVL Medio ({media_tvl:,.0f})']])
+
+                    st.markdown(f"#### Historial de APR")
+                    st.line_chart(df_chart[['APR', f'APR Medio ({media_apr:.2f}%)']])
+                else:
+                    st.warning(f"No hay datos históricos disponibles para el pair '{pair_para_grafico}'.")
             else:
-                st.warning(f"No hay datos históricos disponibles para el pair '{pair_para_grafico}'.")
+                st.info("⬅️ Haz clic en una fila de la tabla de arriba para ver su análisis detallado.")
+        except (IndexError, KeyError):
+            st.info("⬅️ Haz clic en una fila de la tabla de arriba para ver su análisis detallado.")
