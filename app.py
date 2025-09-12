@@ -28,18 +28,18 @@ headers = {
 @st.cache_data
 def load_data():
     """
-    Carga los datos desde la API de Supabase y aplica filtros de backend
-    para 'memes' y 'filtro_3'.
+    Carga los datos desde la API de Supabase y aplica filtros de backend.
     """
-    # --- CAMBIO: Añadimos filtro_3 a la consulta ---
-    # 1. Se añade 'filtro_3' a las columnas que se seleccionan.
-    select_columns = "blockchain,dex,pair,tier,aprmensual,tvlmensual,memes,filtro_3"
+    # --- CAMBIO 1: Añadir las nuevas columnas a la consulta ---
+    select_columns = (
+        "blockchain,dex,pair,tier,aprmensual,tvlmensual,memes,filtro_3,"
+        "correlacion,aprmonthchart,tvlmonthchart,datemonthchart"
+    )
     
-    # 2. Se añade el nuevo filtro a los parámetros de la consulta.
     params = {
         "select": select_columns,
-        "memes": "eq.0",               # Filtro existente
-        "filtro_3": "in.(1,2,3)"       # NUEVO FILTRO: filtro_3 debe ser 1, 2, o 3
+        "memes": "eq.0",
+        "filtro_3": "in.(1,2,3)"
     }
     
     try:
@@ -79,7 +79,7 @@ st.markdown("Utiliza los filtros en la barra lateral para explorar los datos.")
 df_raw = load_data()
 
 if df_raw.empty:
-    st.warning("No se pudieron cargar los datos o no hay resultados con los filtros de backend aplicados (memes=0, filtro_3 in (1,2,3)).")
+    st.warning("No se pudieron cargar los datos o no hay resultados con los filtros de backend aplicados.")
 else:
     df_processed = df_raw.copy()
     df_processed['tvl_numeric'] = clean_numeric_text(df_processed['tvlmensual'])
@@ -87,7 +87,7 @@ else:
 
     # --- Barra Lateral con Filtros ---
     st.sidebar.header("⚙️ Filtros")
-
+    # (El código de la barra lateral no cambia)
     blockchains_disponibles = sorted(df_processed['blockchain'].unique())
     blockchain_seleccionada = st.sidebar.multiselect(
         "Blockchain",
@@ -135,7 +135,8 @@ else:
         format="%.2f%%"
     )
 
-    # --- Lógica de Filtrado de Datos ---
+    # --- Lógica de Filtrado ---
+    # (El código de filtrado no cambia)
     df_filtrado = df_processed.copy()
 
     if blockchain_seleccionada:
@@ -164,18 +165,63 @@ else:
         df_ordenado = df_filtrado.sort_values(by='apr_numeric', ascending=False)
         
         st.markdown("### Tabla de Datos (ordenada por APR Mensual)")
+        # --- CAMBIO 2: Añadir 'correlacion' a la tabla visible ---
         st.dataframe(df_ordenado[[
-            'pair', 'tier', 'aprmensual', 'tvlmensual', 'blockchain', 'dex'
+            'pair', 'tier', 'correlacion', 'aprmensual', 'tvlmensual', 'blockchain', 'dex'
         ]], use_container_width=True)
 
-        st.markdown("### Gráficos Comparativos")
-        
+        st.markdown("### Gráficos Comparativos (Top 20 por TVL)")
         df_grafico = df_filtrado.sort_values(by='tvl_numeric', ascending=False).head(20)
-
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("#### Top 20 TVL por Pair")
+            st.markdown("#### TVL por Pair")
             st.bar_chart(df_grafico.rename(columns={'tvl_numeric': 'TVL'}), x='pair', y='TVL')
         with col2:
-            st.markdown("#### APR de los Top 20 por TVL")
+            st.markdown("#### APR por Pair")
             st.bar_chart(df_grafico.rename(columns={'apr_numeric': 'APR'}), x='pair', y='APR')
+        
+        # --- CAMBIO 3: Nueva sección para el gráfico histórico ---
+        st.markdown("---")
+        st.subheader("Análisis Histórico Mensual por Pair")
+
+        # Desplegable para seleccionar un 'pair' de los resultados filtrados
+        lista_pares_filtrados = df_filtrado['pair'].unique()
+        pair_para_grafico = st.selectbox(
+            "Selecciona un Pair para ver su historial:",
+            options=lista_pares_filtrados
+        )
+
+        if pair_para_grafico:
+            # Obtener los datos del pair seleccionado
+            datos_pair = df_filtrado[df_filtrado['pair'] == pair_para_grafico].iloc[0]
+            
+            # Extraer las listas de los charts
+            dates = datos_pair['datemonthchart']
+            tvls = datos_pair['tvlmonthchart']
+            aprs = datos_pair['aprmonthchart']
+
+            # Comprobar que los datos existen y no están vacíos
+            if dates and tvls and aprs and len(dates) > 0:
+                # Crear un DataFrame para el gráfico
+                df_chart = pd.DataFrame({
+                    'Fecha': pd.to_datetime(dates),
+                    'TVL': tvls,
+                    'APR': aprs
+                }).set_index('Fecha')
+
+                # Calcular las medias
+                media_tvl = df_chart['TVL'].mean()
+                media_apr = df_chart['APR'].mean()
+                
+                # Añadir las medias al DataFrame para dibujarlas como una línea
+                df_chart[f'TVL Medio ({media_tvl:,.0f})'] = media_tvl
+                df_chart[f'APR Medio ({media_apr:.2f}%)'] = media_apr
+
+                # Dibujar los gráficos
+                st.markdown(f"#### Historial de TVL para **{pair_para_grafico}**")
+                st.line_chart(df_chart[['TVL', f'TVL Medio ({media_tvl:,.0f})']])
+
+                st.markdown(f"#### Historial de APR para **{pair_para_grafico}**")
+                st.line_chart(df_chart[['APR', f'APR Medio ({media_apr:.2f}%)']])
+            else:
+                st.warning(f"No hay datos históricos disponibles para el pair '{pair_para_grafico}'.")
