@@ -86,7 +86,6 @@ else:
 
     # --- Barra Lateral con Filtros ---
     st.sidebar.header("⚙️ Filtros")
-    
     blockchains_disponibles = sorted(df_processed['blockchain'].unique())
     blockchain_seleccionada = st.sidebar.multiselect("Blockchain", options=blockchains_disponibles, default=["arbitrum"])
 
@@ -129,62 +128,69 @@ else:
     if df_filtrado.empty:
         st.info("No se encontraron resultados con los filtros aplicados. Intenta ampliar los rangos.")
     else:
-        df_ordenado = df_filtrado.sort_values(by='apr_numeric', ascending=False)
+        df_ordenado = df_filtrado.sort_values(by='apr_numeric', ascending=False).reset_index(drop=True)
         
+        # --- CAMBIO 1: Mostrar tabla con botones en lugar de dataframe seleccionable ---
         st.markdown("### Tabla de Datos (ordenada por APR Mensual)")
-        st.caption("Haz clic en una fila para ver su análisis histórico a continuación.")
-
-        # --- CAMBIO 1: Reemplazar st.dataframe con st.data_editor para permitir selección ---
+        
         columnas_deseadas = ['pair', 'tier', 'correlacion', 'aprmensual', 'tvlmensual', 'blockchain', 'dex']
         columnas_disponibles = [col for col in columnas_deseadas if col in df_ordenado.columns]
         
-        # Usamos data_editor en lugar de dataframe y le asignamos una "key" para rastrear la selección
-        st.data_editor(
-            df_ordenado[columnas_disponibles],
-            hide_index=True,
-            use_container_width=True,
-            # Deshabilitamos la edición para que solo funcione como selector
-            disabled=columnas_disponibles,
-            key="seleccion_fila"
-        )
+        # Guardará la fila de datos si se presiona un botón
+        datos_pair_seleccionado = None
+
+        # Encabezado de la tabla
+        header_cols = st.columns((3, 1, 1, 1, 1, 1, 1, 2))
+        for col, name in zip(header_cols, columnas_disponibles + ["Acción"]):
+            col.markdown(f"**{name.capitalize()}**")
+
+        # Iterar sobre las filas para mostrar los datos y el botón
+        for index, row in df_ordenado.iterrows():
+            row_cols = st.columns((3, 1, 1, 1, 1, 1, 1, 2))
+            for i, col_name in enumerate(columnas_disponibles):
+                row_cols[i].write(row[col_name])
+            
+            # Botón en la última columna
+            if row_cols[-1].button("Ver Historial", key=f"historial_{index}"):
+                datos_pair_seleccionado = row
         
+        # --- CAMBIO 2: Volver a añadir los gráficos de barras comparativos ---
+        st.markdown("### Gráficos Comparativos (Top 20 por TVL)")
+        df_grafico = df_filtrado.sort_values(by='tvl_numeric', ascending=False).head(20)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### TVL por Pair")
+            st.bar_chart(df_grafico.rename(columns={'tvl_numeric': 'TVL'}), x='pair', y='TVL')
+        with col2:
+            st.markdown("#### APR por Pair")
+            st.bar_chart(df_grafico.rename(columns={'apr_numeric': 'APR'}), x='pair', y='APR')
+
+        # --- CAMBIO 3: La sección de análisis histórico ahora depende de si se ha pulsado un botón ---
         st.markdown("---")
         st.subheader("Análisis Histórico Mensual")
 
-        # --- CAMBIO 2: Lógica para mostrar gráficos basados en la fila seleccionada ---
-        # Verificamos si el usuario ha seleccionado alguna fila usando la "key" del data_editor
-        try:
-            # st.session_state.seleccion_fila['selection']['rows'] contiene los índices de las filas seleccionadas
-            if st.session_state.seleccion_fila['selection']['rows']:
-                # Obtenemos el índice de la primera fila seleccionada
-                indice_seleccionado = st.session_state.seleccion_fila['selection']['rows'][0]
+        if datos_pair_seleccionado is not None:
+            pair_para_grafico = datos_pair_seleccionado['pair']
+            st.markdown(f"Mostrando historial para: **{pair_para_grafico}**")
+            
+            dates = datos_pair_seleccionado['datemonthchart']
+            tvls = datos_pair_seleccionado['tvlmonthchart']
+            aprs = datos_pair_seleccionado['aprmonthchart']
+
+            if dates and tvls and aprs and len(dates) > 0:
+                df_chart = pd.DataFrame({'Fecha': pd.to_datetime(dates), 'TVL': tvls, 'APR': aprs}).set_index('Fecha')
                 
-                # Usamos el índice para obtener todos los datos de esa fila del dataframe ordenado
-                datos_pair = df_ordenado.iloc[indice_seleccionado]
-                pair_para_grafico = datos_pair['pair']
+                media_tvl = df_chart['TVL'].mean()
+                media_apr = df_chart['APR'].mean()
+                df_chart[f'TVL Medio ({media_tvl:,.0f})'] = media_tvl
+                df_chart[f'APR Medio ({media_apr:.2f}%)'] = media_apr
 
-                st.markdown(f"Mostrando historial para: **{pair_para_grafico}**")
-                
-                dates = datos_pair['datemonthchart']
-                tvls = datos_pair['tvlmonthchart']
-                aprs = datos_pair['aprmonthchart']
+                st.markdown(f"#### Historial de TVL")
+                st.line_chart(df_chart[['TVL', f'TVL Medio ({media_tvl:,.0f})']])
 
-                if dates and tvls and aprs and len(dates) > 0:
-                    df_chart = pd.DataFrame({'Fecha': pd.to_datetime(dates), 'TVL': tvls, 'APR': aprs}).set_index('Fecha')
-                    
-                    media_tvl = df_chart['TVL'].mean()
-                    media_apr = df_chart['APR'].mean()
-                    df_chart[f'TVL Medio ({media_tvl:,.0f})'] = media_tvl
-                    df_chart[f'APR Medio ({media_apr:.2f}%)'] = media_apr
-
-                    st.markdown(f"#### Historial de TVL")
-                    st.line_chart(df_chart[['TVL', f'TVL Medio ({media_tvl:,.0f})']])
-
-                    st.markdown(f"#### Historial de APR")
-                    st.line_chart(df_chart[['APR', f'APR Medio ({media_apr:.2f}%)']])
-                else:
-                    st.warning(f"No hay datos históricos disponibles para el pair '{pair_para_grafico}'.")
+                st.markdown(f"#### Historial de APR")
+                st.line_chart(df_chart[['APR', f'APR Medio ({media_apr:.2f}%)']])
             else:
-                st.info("⬅️ Haz clic en una fila de la tabla de arriba para ver su análisis detallado.")
-        except (IndexError, KeyError):
-            st.info("⬅️ Haz clic en una fila de la tabla de arriba para ver su análisis detallado.")
+                st.warning(f"No hay datos históricos disponibles para el pair '{pair_para_grafico}'.")
+        else:
+            st.info("Presiona el botón 'Ver Historial' en cualquier fila para ver el detalle de su rendimiento.")
