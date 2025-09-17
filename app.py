@@ -163,7 +163,7 @@ with tab1:
                 st.info("Presiona 'Ver Historial' en cualquier fila para ver el detalle.")
 
 # ==============================================================================
-# PESTAÑA 2: ANÁLISIS DE WALLET (Tu nuevo código)
+# PESTAÑA 2: ANÁLISIS DE WALLET (CÓDIGO CORREGIDO)
 # ==============================================================================
 with tab2:
     st.header("🧾 Análisis de Transacciones de Wallet")
@@ -171,7 +171,6 @@ with tab2:
 
     # --- Funciones para la pestaña de Tax ---
     def fetch_txs(address, apikey, chainid=42161, page=1, offset=10000, sort="asc"):
-        # URL actualizada para Arbiscan
         url = (
             f"https://api.arbiscan.io/api?module=account&action=tokentx"
             f"&address={address}&page={page}&offset={offset}&sort={sort}&apikey={apikey}"
@@ -180,14 +179,25 @@ with tab2:
             resp = requests.get(url, timeout=30)
             resp.raise_for_status()
             data = resp.json()
-            if not isinstance(data, dict) or "result" not in data:
-                raise ValueError(f"Respuesta inesperada de la API: {data.get('message', 'Sin mensaje')}")
-            return data["result"]
+
+            # <-- CAMBIO CLAVE 1: Verificación robusta de la respuesta de la API
+            if data.get("status") == "0":
+                # La API devolvió un error conocido, como una clave inválida.
+                raise ValueError(f"Error de la API de Arbiscan: {data.get('message', 'Sin mensaje')} - {data.get('result', '')}")
+
+            result = data.get("result")
+            if not isinstance(result, list):
+                # El resultado no es una lista, lo que indica un problema inesperado.
+                raise TypeError(f"La respuesta de la API no es una lista de transacciones. Recibido: {result}")
+            
+            return result
+        
         except requests.exceptions.RequestException as e:
-            st.error(f"Error de conexión con la API de Arbiscan: {e}")
-            return None
+            # Captura errores de conexión
+            raise ConnectionError(f"Error de conexión con la API de Arbiscan: {e}")
 
     def summarize_tx(tx, queried_address):
+        # Esta función no necesita cambios, el error estaba antes de llegar aquí.
         q, frm, to = queried_address.lower(), (tx.get("from") or "").lower(), (tx.get("to") or "").lower()
         
         if frm == q and to != q: direction = "OUT"
@@ -203,7 +213,7 @@ with tab2:
         
         gas_used, gas_price = int(tx.get("gasUsed", 0) or 0), int(tx.get("gasPrice", 0) or 0)
         gas_cost_wei = gas_used * gas_price
-        gas_cost_eth = gas_cost_wei / 10**18  # ETH es el token nativo en Arbitrum
+        gas_cost_eth = gas_cost_wei / 10**18
 
         return {
             "hash": tx.get("hash"), "block": int(tx.get("blockNumber") or 0),
@@ -215,6 +225,7 @@ with tab2:
         }
 
     def determine_event(row, hash_counts):
+        # Sin cambios aquí
         func, direction, token, hash_val = (row.get("function") or "").lower(), row.get("direction") or "", (row.get("token_symbol") or "").upper(), row.get("hash")
         if pd.notna(row.get("event")) and row.get("event") != '': return row.get("event")
         if direction == "OUT" and token == "USDC" and hash_counts.get(str(hash_val), 0) == 1: return "USD_TRANSFER_OUT"
@@ -222,16 +233,23 @@ with tab2:
         if func.startswith("transfer") and direction == "IN": return "USD_TRANSFER_IN"
         return None
 
-    @st.cache_data # Cache para evitar re-cálculos con la misma wallet
+    @st.cache_data
     def process_wallet_data(address, apikey):
-        txs = fetch_txs(address, apikey)
-        if txs is None: return pd.DataFrame() # Retorna DF vacío si hay error
+        # <-- CAMBIO CLAVE 2: Capturar los errores de la función fetch_txs
+        try:
+            txs = fetch_txs(address, apikey)
+        except (ValueError, TypeError, ConnectionError) as e:
+            st.error(str(e)) # Muestra el mensaje de error claro en la app
+            return pd.DataFrame() # Devuelve un DataFrame vacío para detener el proceso
+
+        if not txs: # Si txs está vacío (sin transacciones)
+            return pd.DataFrame()
         
         summaries = [summarize_tx(tx, address) for tx in txs]
         df = pd.DataFrame(summaries)
         if df.empty: return df
 
-        # --- Lógica de procesamiento ---
+        # --- El resto de la lógica de procesamiento (sin cambios) ---
         hash_counts = df['hash'].fillna('').astype(str).value_counts().to_dict()
         df["event"] = df.apply(lambda r: determine_event(r, hash_counts), axis=1)
         df = df[["hash", "direction", "token_symbol", "adjusted_value", "contract", "datetime_utc", "event"]]
@@ -278,11 +296,11 @@ with tab2:
         df_final = df[pd.to_numeric(df['value'], errors='coerce').notna()].copy()
         df_final.drop(columns=['prev_diff_hash', 'next_diff_hash'], inplace=True)
         return df_final
-
-    # --- Interfaz de la Pestaña de Tax ---
+    
+    # --- El resto de la interfaz (sin cambios) ---
     wallet_address = st.text_input(
         "Dirección de la Wallet",
-        "0x0447dF6dBe7D260eCDC31cb97A6266d209d13960", # Dirección de ejemplo
+        "0x0447dF6dBe7D260eCDC31cb97A6266d209d13960",
         help="Pega aquí la dirección de la wallet de Arbitrum que quieres analizar."
     )
 
@@ -290,22 +308,20 @@ with tab2:
         if not re.match(r"^0x[a-fA-F0-9]{40}$", wallet_address):
             st.error("Por favor, introduce una dirección de wallet Ethereum válida (0x...).")
         else:
-            with st.spinner("Consultando API de Arbiscan y procesando transacciones... Esto puede tardar un momento."):
+            with st.spinner("Consultando API de Arbiscan y procesando transacciones..."):
                 final_df = process_wallet_data(wallet_address, ARBISCAN_KEY)
-                # Guardar en el estado de la sesión para persistencia
                 st.session_state['tax_results'] = final_df
 
-    # Mostrar la tabla si existen resultados en el estado de la sesión
     if 'tax_results' in st.session_state:
         results = st.session_state['tax_results']
         st.markdown("---")
         st.subheader(f"✅ Análisis completado. Se encontraron {len(results)} eventos relevantes.")
         
         if not results.empty:
-            # Formatear columnas para mejor visualización
             display_df = results.copy()
+            # Corrección en el formateo
             display_df['adjusted_value'] = display_df['adjusted_value'].map('{:,.4f}'.format)
-            display_df['value'] = display.df['value'].map('{:,.2f}'.format)
+            display_df['value'] = display_df['value'].map('{:,.2f}'.format)
             st.dataframe(
                 display_df[['datetime_utc', 'event', 'value', 'token_symbol', 'direction', 'hash']],
                 use_container_width=True
