@@ -6,26 +6,27 @@ import numpy as np
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-# --- Configuración de la página ---
+# --- Configuración de la Página ---
 st.set_page_config(layout="wide", page_title="Dashboard de Pools y Análisis")
 
-# --- Cargar credenciales de forma segura desde secrets.toml ---
+# --- Carga Segura de Credenciales desde secrets.toml ---
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    ARBISCAN_KEY = st.secrets["ARBISCAN_KEY"] # <-- AÑADIDO: Clave para la API de Arbiscan
+    # La clave que funciona es la de Etherscan, la cargamos desde el secreto ARBISCAN_KEY
+    ETHERSCAN_KEY = st.secrets["ARBISCAN_KEY"] 
 except FileNotFoundError:
     st.error("Archivo 'secrets.toml' no encontrado. Por favor, créalo en la carpeta '.streamlit/' con tus credenciales.")
     st.stop()
 except KeyError as e:
-    st.error(f"Asegúrate de que la clave '{e.args[0]}' está definida en tu archivo 'secrets.toml'.")
+    st.error(f"Asegúrate de que la clave '{e.args[0]}' está definida en tu archivo 'secrets.toml'. Revisa que 'SUPABASE_URL', 'SUPABASE_KEY' y 'ARBISCAN_KEY' existan.")
     st.stop()
 
 # --- Creación de Pestañas ---
 tab1, tab2 = st.tabs(["📈 Dashboard de Pools", "🧾 Análisis de Wallet (Tax)"])
 
 # ==============================================================================
-# PESTAÑA 1: DASHBOARD DE POOLS (Tu código original)
+# PESTAÑA 1: DASHBOARD DE POOLS DE LIQUIDEZ
 # ==============================================================================
 with tab1:
     # Headers para la petición a la API de Supabase
@@ -163,16 +164,17 @@ with tab1:
                 st.info("Presiona 'Ver Historial' en cualquier fila para ver el detalle.")
 
 # ==============================================================================
-# PESTAÑA 2: ANÁLISIS DE WALLET (CÓDIGO CORREGIDO)
+# PESTAÑA 2: ANÁLISIS DE WALLET (TAX)
 # ==============================================================================
 with tab2:
     st.header("🧾 Análisis de Transacciones de Wallet")
     st.markdown("Introduce una dirección de wallet de Arbitrum para obtener un resumen de sus transacciones y eventos.")
 
-    # --- Funciones para la pestaña de Tax ---
+    # --- Funciones para la Pestaña de Análisis ---
     def fetch_txs(address, apikey, chainid=42161, page=1, offset=10000, sort="asc"):
+        # URL CORREGIDA: Usando el endpoint de etherscan.io que sí funciona con la API Key
         url = (
-            f"https://api.arbiscan.io/api?module=account&action=tokentx"
+            f"https://api.etherscan.io/v2/api?chainid={chainid}&module=account&action=tokentx"
             f"&address={address}&page={page}&offset={offset}&sort={sort}&apikey={apikey}"
         )
         try:
@@ -180,24 +182,21 @@ with tab2:
             resp.raise_for_status()
             data = resp.json()
 
-            # <-- CAMBIO CLAVE 1: Verificación robusta de la respuesta de la API
-            if data.get("status") == "0":
-                # La API devolvió un error conocido, como una clave inválida.
-                raise ValueError(f"Error de la API de Arbiscan: {data.get('message', 'Sin mensaje')} - {data.get('result', '')}")
-
+            # Verificación robusta de la respuesta de la API
+            if data.get("status") == "0" or "result" not in data:
+                raise ValueError(f"Error de la API de Etherscan: {data.get('message', 'Sin mensaje')}")
+            
             result = data.get("result")
             if not isinstance(result, list):
-                # El resultado no es una lista, lo que indica un problema inesperado.
-                raise TypeError(f"La respuesta de la API no es una lista de transacciones. Recibido: {result}")
+                raise TypeError(f"La respuesta de la API no es una lista. Recibido: {result}")
             
             return result
         
         except requests.exceptions.RequestException as e:
             # Captura errores de conexión
-            raise ConnectionError(f"Error de conexión con la API de Arbiscan: {e}")
+            raise ConnectionError(f"Error de conexión con la API de Etherscan: {e}")
 
     def summarize_tx(tx, queried_address):
-        # Esta función no necesita cambios, el error estaba antes de llegar aquí.
         q, frm, to = queried_address.lower(), (tx.get("from") or "").lower(), (tx.get("to") or "").lower()
         
         if frm == q and to != q: direction = "OUT"
@@ -213,7 +212,7 @@ with tab2:
         
         gas_used, gas_price = int(tx.get("gasUsed", 0) or 0), int(tx.get("gasPrice", 0) or 0)
         gas_cost_wei = gas_used * gas_price
-        gas_cost_eth = gas_cost_wei / 10**18
+        gas_cost_eth = gas_cost_wei / 10**18  # ETH es el token nativo en Arbitrum
 
         return {
             "hash": tx.get("hash"), "block": int(tx.get("blockNumber") or 0),
@@ -225,7 +224,6 @@ with tab2:
         }
 
     def determine_event(row, hash_counts):
-        # Sin cambios aquí
         func, direction, token, hash_val = (row.get("function") or "").lower(), row.get("direction") or "", (row.get("token_symbol") or "").upper(), row.get("hash")
         if pd.notna(row.get("event")) and row.get("event") != '': return row.get("event")
         if direction == "OUT" and token == "USDC" and hash_counts.get(str(hash_val), 0) == 1: return "USD_TRANSFER_OUT"
@@ -235,12 +233,11 @@ with tab2:
 
     @st.cache_data
     def process_wallet_data(address, apikey):
-        # <-- CAMBIO CLAVE 2: Capturar los errores de la función fetch_txs
         try:
             txs = fetch_txs(address, apikey)
         except (ValueError, TypeError, ConnectionError) as e:
             st.error(str(e)) # Muestra el mensaje de error claro en la app
-            return pd.DataFrame() # Devuelve un DataFrame vacío para detener el proceso
+            return pd.DataFrame()
 
         if not txs: # Si txs está vacío (sin transacciones)
             return pd.DataFrame()
@@ -249,7 +246,7 @@ with tab2:
         df = pd.DataFrame(summaries)
         if df.empty: return df
 
-        # --- El resto de la lógica de procesamiento (sin cambios) ---
+        # --- Lógica de Procesamiento ---
         hash_counts = df['hash'].fillna('').astype(str).value_counts().to_dict()
         df["event"] = df.apply(lambda r: determine_event(r, hash_counts), axis=1)
         df = df[["hash", "direction", "token_symbol", "adjusted_value", "contract", "datetime_utc", "event"]]
@@ -296,11 +293,11 @@ with tab2:
         df_final = df[pd.to_numeric(df['value'], errors='coerce').notna()].copy()
         df_final.drop(columns=['prev_diff_hash', 'next_diff_hash'], inplace=True)
         return df_final
-    
-    # --- El resto de la interfaz (sin cambios) ---
+
+    # --- Interfaz de la Pestaña de Análisis ---
     wallet_address = st.text_input(
         "Dirección de la Wallet",
-        "0x0447dF6dBe7D260eCDC31cb97A6266d209d13960",
+        "0x0447dF6dBe7D260eCDC31cb97A6266d209d13960", # Dirección de ejemplo
         help="Pega aquí la dirección de la wallet de Arbitrum que quieres analizar."
     )
 
@@ -308,8 +305,9 @@ with tab2:
         if not re.match(r"^0x[a-fA-F0-9]{40}$", wallet_address):
             st.error("Por favor, introduce una dirección de wallet Ethereum válida (0x...).")
         else:
-            with st.spinner("Consultando API de Arbiscan y procesando transacciones..."):
-                final_df = process_wallet_data(wallet_address, ARBISCAN_KEY)
+            with st.spinner("Consultando API de Etherscan y procesando transacciones..."):
+                # Pasa la clave correcta desde los secretos
+                final_df = process_wallet_data(wallet_address, ETHERSCAN_KEY)
                 st.session_state['tax_results'] = final_df
 
     if 'tax_results' in st.session_state:
@@ -319,12 +317,13 @@ with tab2:
         
         if not results.empty:
             display_df = results.copy()
-            # Corrección en el formateo
+            # Formateo de columnas para mejor visualización
             display_df['adjusted_value'] = display_df['adjusted_value'].map('{:,.4f}'.format)
             display_df['value'] = display_df['value'].map('{:,.2f}'.format)
             st.dataframe(
                 display_df[['datetime_utc', 'event', 'value', 'token_symbol', 'direction', 'hash']],
-                use_container_width=True
+                use_container_width=True,
+                hide_index=True
             )
         else:
             st.warning("No se encontraron transacciones o eventos relevantes para la wallet especificada con la lógica actual.")
